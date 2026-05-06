@@ -256,6 +256,23 @@ int main(int argc, char* argv[])
         }
         std::cout << "[+] Genrate and write default \'" << CERTIFICATE_FILE << "\' over!" << std::endl;
     }
+
+	// 提升权限以操作驱动
+    HANDLE hToken = NULL;
+    TOKEN_PRIVILEGES priv = { 0 };
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken))
+    {
+        priv.PrivilegeCount = 1;
+        priv.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+
+        if (LookupPrivilegeValue(NULL, SE_DEBUG_NAME, &priv.Privileges[0].Luid))
+            AdjustTokenPrivileges(hToken, FALSE, &priv, 0, NULL, NULL);
+
+        CloseHandle(hToken);
+    }
+    else {
+        std::cout << "[!] Error: OpenProcessToken Failed!" << std::endl;
+    }
     
     // 安装/启动EchoDrv驱动
     std::string cur_path = Utils::GetCurrentProcessDir();
@@ -326,14 +343,15 @@ int main(int argc, char* argv[])
 
     std::cout << "[+] SbieDrv.sys base address: 0x" << std::hex << SbieDrvBaseAddress << std::dec << std::endl;
     
-    // 读取KphpTrustedPublicKey公钥, 利用pdb信息获取变量偏移
-    std::cout << "[=] Begin get KphpTrustedPublicKey offset from pdb..." << std::endl;
-    uint64_t KphpTrustedPublicKeyOffset = SbieUtil::GetSymbolOffset(SBIEDRV_NAME, SBIEPDB_NAME, "KphpTrustedPublicKey"),
-        KphpTrustedPublicKeyAddress = SbieDrvBaseAddress + KphpTrustedPublicKeyOffset;
-    if (KphpTrustedPublicKeyOffset < 0) {
+    // 读取KphpTrustedPublicKey公钥, 从文件中特征码匹配获取变量偏移
+    std::cout << "[=] Begin get KphpTrustedPublicKey offset from file..." << std::endl;
+    uint64_t KphpTrustedPublicKeyOffsetSigned = SbieUtil::GetKphVerifySignatureOffset(SBIEDRV_NAME);
+    if (KphpTrustedPublicKeyOffsetSigned == 0) {
         std::cout << "[!] Error: GetSymbolOffset KphpTrustedPublicKeyOffset from " << SBIEPDB_NAME << " Failed!" << std::endl;
         return -1;
     }
+    uint64_t KphpTrustedPublicKeyOffset = static_cast<uint64_t>(KphpTrustedPublicKeyOffsetSigned),
+        KphpTrustedPublicKeyAddress = SbieDrvBaseAddress + KphpTrustedPublicKeyOffset;
     std::cout << "[+] KphpTrustedPublicKey offset: 0x" << std::hex << KphpTrustedPublicKeyOffset << std::dec << std::endl;
     
     uint8_t KphpTrustedPublicKey[72] = { 0 };
@@ -371,7 +389,7 @@ int main(int argc, char* argv[])
         //开始修改SandMan.exe.sig
         if (!Utils::FileExists(SANDMAN_SIG_BAK)) {
             //备份SandMax.exe.sig
-            if (rename(SANDMAN_SIG, SANDMAN_SIG_BAK) ！= 0) {
+            if (rename(SANDMAN_SIG, SANDMAN_SIG_BAK) != 0) {
 				std::cout << "[!] Warning: Rename " << SANDMAN_SIG << " to " << SANDMAN_SIG_BAK << " failed!" << std::endl;
             }
         }
